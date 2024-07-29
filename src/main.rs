@@ -1,3 +1,4 @@
+use std::clone;
 use std::io::{self, Write};
 
 use anyhow::Result;
@@ -74,10 +75,21 @@ async fn main() -> Result<()> {
     user_prompt();
 
     for line in std::io::stdin().lines() {
-        ollama.chat(line.unwrap().as_str(), &mut chat).await?;
+        let mut line = line.unwrap();
+
+        let domd = if line.starts_with('!') {
+            line = line[1..].to_string();
+            true
+        } else {
+            false
+        };
+
+        ollama.chat(line.as_str(), &mut chat).await?;
 
         if let Some(resp) = chat.response() {
-            let _ = view_resp(skin.clone(), resp);
+            if domd {
+                let _ = view_resp(skin.clone(), resp);
+            }
         }
 
         user_prompt()
