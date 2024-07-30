@@ -11,6 +11,7 @@ use termimad::crossterm::{
 };
 use termimad::*;
 mod ollama;
+use clap::Parser;
 use colored::Colorize;
 
 fn user_prompt() {
@@ -63,8 +64,23 @@ fn view_resp(skin: MadSkin, md: String) -> Result<(), Error> {
     Ok(())
 }
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Model to be used
+    #[arg(short, long)]
+    model: Option<String>,
+    /// Force markdown output
+    #[arg(short, long, default_value_t = false)]
+    force_md: bool,
+    /// List available models
+    #[clap(long, short, action)]
+    list_models: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     env_logger::init();
 
     let mut skin = MadSkin::default();
@@ -72,7 +88,17 @@ async fn main() -> Result<()> {
     skin.set_headers_fg(AnsiValue(178));
     skin.scrollbar.thumb.set_fg(AnsiValue(178));
     skin.code_block.align = Alignment::Center;
-    let ollama = Ollama::default().await?;
+
+    let mut ollama = Ollama::default().await?;
+
+    if args.list_models {
+        ollama.print_models();
+        return Ok(());
+    }
+
+    if let Some(model) = args.model {
+        ollama.set_model(model.as_str())?;
+    }
 
     let mut chat = ollama.context_new()?;
 
@@ -93,7 +119,7 @@ async fn main() -> Result<()> {
         ollama.chat(line.as_str(), &mut chat).await?;
 
         if let Some(resp) = chat.response() {
-            if domd {
+            if domd || args.force_md {
                 let _ = view_resp(skin.clone(), resp);
             }
         }

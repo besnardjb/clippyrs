@@ -193,6 +193,19 @@ impl Ollama {
         Ok(models)
     }
 
+    pub fn print_models(&self) {
+        if let Some(models) = &self.models {
+            for m in models.iter() {
+                println!(
+                    "- {} {} {}",
+                    m.name,
+                    m.details.family,
+                    m.details.parameter_size.clone().unwrap_or("".to_string())
+                );
+            }
+        }
+    }
+
     pub async fn default() -> Result<Ollama> {
         let (host, port) = if let Ok(ollamahost) = env::var("OLLAMA_HOST") {
             let addr_no_proto = ollamahost.replace("http://", "").replace("https://", "");
@@ -221,19 +234,25 @@ impl Ollama {
 
     pub fn set_model(&mut self, model: &str) -> Result<()> {
         /* Make sure model exists */
+        let mut tmp_model = model.to_string();
+
         if let Some(models) = &self.models {
             let model_list: Vec<String> = models.iter().map(|v| v.name.clone()).collect();
 
-            if !model_list.contains(&model.to_string()) {
-                return Err(anyhow!(
-                    "Cannot load model '{}' available models are {:?}",
-                    model,
-                    model_list
-                ));
+            if !model_list.contains(&tmp_model) {
+                // Try to append :latest
+                tmp_model += ":latest";
+                if !model_list.contains(&tmp_model) {
+                    return Err(anyhow!(
+                        "Cannot load model '{}' available models are {:?}",
+                        model,
+                        model_list
+                    ));
+                }
             }
         }
 
-        self.current_model = Some(model.to_string());
+        self.current_model = Some(tmp_model);
 
         Ok(())
     }
