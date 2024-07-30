@@ -213,7 +213,7 @@ impl Ollama {
                 (ollamahost, 11434)
             }
         } else {
-            ("localhost".to_string(), 11434)
+            ("http://localhost".to_string(), 11434)
         };
 
         Ollama::init(&host, port).await
