@@ -1,9 +1,7 @@
-use std::clone;
-use std::io::{self, Write};
-
 use anyhow::Result;
 use ollama::Ollama;
 use std::io::stdout;
+use std::io::{self, Write};
 use termimad::crossterm::style::Color::*;
 use termimad::crossterm::{
     cursor::{Hide, Show},
@@ -13,9 +11,15 @@ use termimad::crossterm::{
 };
 use termimad::*;
 mod ollama;
+use colored::Colorize;
 
 fn user_prompt() {
-    print!("\nUser: ");
+    print!("{}", "\nUser: ".bold().blue());
+    io::stdout().flush().unwrap();
+}
+
+fn assistant_prompt() {
+    print!("{}", "\nAssistant: ".bold().red());
     io::stdout().flush().unwrap();
 }
 
@@ -83,6 +87,8 @@ async fn main() -> Result<()> {
         } else {
             false
         };
+
+        assistant_prompt();
 
         ollama.chat(line.as_str(), &mut chat).await?;
 

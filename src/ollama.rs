@@ -261,8 +261,6 @@ impl Ollama {
             .map(|x| x.unwrap());
 
         //One line here
-        print!("\nAssistant:");
-
         let mut assistant_resp = String::new();
 
         while let Some(item) = res.next().await {
@@ -282,6 +280,8 @@ impl Ollama {
                 }
             }
         }
+
+        println!();
 
         context.messages.push(Message {
             role: "assistant".to_string(),
