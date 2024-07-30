@@ -8,8 +8,15 @@ ClippyRS is a command-line interface (CLI) client built using Rust, designed to 
 * Parse the `OLLAMA_HOST` environment variable to determine the base URL of the OLLAMA API
 * Tries localhost on default port otherwise
 * If your input starts with '!' result will be displayed in a markdown-aware pager
+* `::CL::` in your prompt will read from clipboard
 
 ## Usage
+
+```bash
+# Read from clipboard and store in clipboard
+clippyrs -s -- Fix typos in this text: ::CL::
+```
+
 
 ```
 Usage: clippyrs [OPTIONS] [-- <PROMPT>...]
