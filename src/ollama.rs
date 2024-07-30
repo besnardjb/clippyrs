@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Write;
 use std::{env, io};
 
@@ -87,9 +88,41 @@ pub struct Message {
 }
 
 #[derive(Serialize, Debug)]
+struct ToolFunctionParam {
+    #[serde(rename = "type")]
+    __type: String,
+    description: String,
+    #[serde(rename = "enum")]
+    __enum: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Debug)]
+struct ToolFunctionParameters {
+    #[serde(rename = "type")]
+    __type: String,
+    properties: HashMap<String, ToolFunctionParam>,
+    required: Vec<String>,
+}
+
+#[derive(Serialize, Debug)]
+struct ToolFunction {
+    name: String,
+    description: String,
+    parameters: ToolFunctionParameters,
+}
+
+#[derive(Serialize, Debug)]
+pub struct Tool {
+    #[serde(rename = "type")]
+    __type: String,
+    function: ToolFunction,
+}
+
+#[derive(Serialize, Debug)]
 pub struct Chat {
     model: String,
     messages: Vec<Message>,
+    tools: Option<Vec<Tool>>,
 }
 
 impl Chat {
@@ -97,6 +130,7 @@ impl Chat {
         Chat {
             model: model.to_string(),
             messages: vec![],
+            tools: None,
         }
     }
 
@@ -107,6 +141,7 @@ impl Chat {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             }],
+            tools: None,
         }
     }
 
@@ -222,8 +257,10 @@ impl Ollama {
                 }
             } else if ollamahost.starts_with("https://") || ollamahost.starts_with("http://") {
                 (ollamahost, 0)
+            } else if !ollamahost.starts_with("http") {
+                (format!("http://{}", ollamahost), 11434)
             } else {
-                (ollamahost, 11434)
+                return Err(anyhow!("Failed to parse OLLAMA_HOST {}", ollamahost));
             }
         } else {
             ("http://localhost".to_string(), 11434)
