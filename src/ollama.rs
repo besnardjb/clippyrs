@@ -1,10 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
+use std::rc::Rc;
 use std::{env, io};
+
+use url::Url;
+use url_open::UrlOpen;
 
 /* Model Description */
 
@@ -68,23 +72,54 @@ struct OllamaModels {
     models: Vec<OllamaModel>,
 }
 
-/** Message
- *
- * {
-  "model": "llama3",
-  "messages": [
-    {
-      "role": "user",
-      "content": "why is the sky blue?"
-    }
-  ]
+/** Tool Call
+*     "tool_calls": [
+     {
+       "function": {
+         "name": "get_current_weather",
+         "arguments": {
+           "format": "celsius",
+           "location": "Paris, FR"
+         }
+       }
+     }
+   ]
+*/
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ToolCall {
+    name: String,
+    parameters: HashMap<String, String>,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ToolCalls {
+    function: Vec<ToolCall>,
+}
+
+/** Message
+"message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_current_weather",
+          "arguments": {
+            "format": "celsius",
+            "location": "Paris, FR"
+          }
+        }
+      }
+    ]
+  }
 */
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Message {
     role: String,
     content: String,
+    tool_calls: Option<ToolCalls>,
 }
 
 #[derive(Serialize, Debug)]
@@ -111,18 +146,157 @@ struct ToolFunction {
     parameters: ToolFunctionParameters,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize)]
 pub struct Tool {
     #[serde(rename = "type")]
     __type: String,
     function: ToolFunction,
+    #[serde(skip_serializing)]
+    closure: Box<dyn Fn(Vec<String>) -> String>,
 }
 
-#[derive(Serialize, Debug)]
+impl Tool {
+    /// An expression calculator
+    pub fn calculator() -> Tool {
+        let f = Box::new(|args: Vec<String>| {
+            /* We need exactly two arguments */
+            if args.len() != 1 {
+                return "Operation failed as a single operand is needed".to_string();
+            }
+
+            match meval::eval_str(args.first().unwrap()) {
+                Ok(resp) => format!("{}", resp),
+                Err(e) => e.to_string(),
+            }
+        });
+
+        let mut ret = Tool::new(
+            "math_calculator",
+            "A function computing the result of arbitrary mathematical expressions ",
+            f,
+        );
+        ret.push_arg("expression", "string", "Expression to evaluate", None);
+        ret.set_required("expression").unwrap();
+
+        ret
+    }
+
+    pub fn url_open() -> Tool {
+        let f = Box::new(|args: Vec<String>| {
+            /* We need exactly two arguments */
+            if args.len() != 1 {
+                return "Operation failed as a single URL argument is needed".to_string();
+            }
+
+            if let Ok(url) = Url::parse(args.first().unwrap()) {
+                url.open();
+                "URL successfully opened".to_string()
+            } else {
+                "Failed to parse URL".to_string()
+            }
+        });
+
+        let mut ret = Tool::new("open_url", "Use this to open an URL for the User.", f);
+        ret.push_arg(
+            "url",
+            "string",
+            "URL to open as correct HTTP(s) address",
+            None,
+        );
+        ret.set_required("url").unwrap();
+
+        ret
+    }
+
+    pub fn new(name: &str, description: &str, f: Box<dyn Fn(Vec<String>) -> String>) -> Tool {
+        Tool {
+            __type: "object".to_string(),
+            closure: f,
+            function: ToolFunction {
+                name: name.to_string(),
+                description: description.to_string(),
+                parameters: ToolFunctionParameters {
+                    __type: "object".to_string(),
+                    properties: HashMap::new(),
+                    required: vec![],
+                },
+            },
+        }
+    }
+
+    pub fn push_arg(
+        &mut self,
+        name: &str,
+        atype: &str,
+        description: &str,
+        optenum: Option<Vec<String>>,
+    ) {
+        self.function.parameters.properties.insert(
+            name.to_string(),
+            ToolFunctionParam {
+                __type: atype.to_string(),
+                description: description.to_string(),
+                __enum: optenum,
+            },
+        );
+    }
+
+    fn extract_args(&self, parameters: HashMap<String, String>) -> Result<Vec<String>> {
+        let mut ret: Vec<String> = Vec::new();
+
+        /* Check for required args */
+        for arg in self.function.parameters.properties.keys() {
+            if let Some(prop) = parameters.get(arg) {
+                ret.push(prop.clone());
+            } else {
+                return Err(anyhow!(
+                    "No such argument '{}' to function '{}'",
+                    arg,
+                    self.function.name
+                ));
+            }
+        }
+
+        /* Check for extra arg */
+        for arg in parameters.keys() {
+            if !self.function.parameters.properties.contains_key(arg) {
+                return Err(anyhow!(
+                    "Function '{}' does not take a '{}' argument",
+                    self.function.name,
+                    arg
+                ));
+            }
+        }
+
+        Ok(ret)
+    }
+
+    pub fn set_required(&mut self, arg: &str) -> Result<()> {
+        for key in self.function.parameters.properties.keys() {
+            if *key == arg {
+                self.function.parameters.required.push(key.clone());
+                return Ok(());
+            }
+        }
+
+        Err(anyhow!(
+            "No such parameter {} in {}",
+            arg,
+            self.function.name
+        ))
+    }
+
+    pub fn register_defaults(chat: &mut Chat) {
+        chat.add_tool(Tool::calculator());
+        chat.add_tool(Tool::url_open());
+    }
+}
+
+#[derive(Serialize)]
 pub struct Chat {
     model: String,
     messages: Vec<Message>,
-    tools: Option<Vec<Tool>>,
+    tools: Vec<Tool>,
 }
 
 impl Chat {
@@ -130,7 +304,7 @@ impl Chat {
         Chat {
             model: model.to_string(),
             messages: vec![],
-            tools: None,
+            tools: vec![],
         }
     }
 
@@ -140,15 +314,31 @@ impl Chat {
             messages: vec![Message {
                 role: "user".to_string(),
                 content: prompt.to_string(),
+                tool_calls: None,
             }],
-            tools: None,
+            tools: vec![],
         }
+    }
+
+    pub fn add_tool(&mut self, tool: Tool) {
+        self.tools.push(tool);
+    }
+
+    pub fn get_tool(&self, name: &str) -> Option<Rc<&Tool>> {
+        for t in self.tools.iter() {
+            if t.function.name == name {
+                return Some(Rc::new(t));
+            }
+        }
+
+        None
     }
 
     fn add_prompt(&mut self, prompt: &str) {
         self.messages.push(Message {
             role: "user".to_string(),
             content: prompt.to_string(),
+            tool_calls: None,
         })
     }
 
@@ -178,6 +368,7 @@ impl Chat {
   "eval_duration": 4799921000
 }
  */
+
 #[derive(Deserialize, Debug)]
 struct ChatResponse {
     model: String,
@@ -302,9 +493,11 @@ impl Ollama {
         }
     }
 
-    pub async fn chat(&self, prompt: &str, context: &mut Chat) -> Result<()> {
+    pub async fn chat(&self, prompt: Option<&str>, context: &mut Chat) -> Result<bool> {
         /* Add user request */
-        context.add_prompt(prompt);
+        if let Some(prompt) = prompt {
+            context.add_prompt(prompt);
+        }
 
         let client = reqwest::Client::new();
 
@@ -339,12 +532,43 @@ impl Ollama {
 
         println!();
 
+        /* Check if last command is a function call */
+        let call = match serde_json::from_str::<ToolCall>(assistant_resp.as_str()) {
+            Ok(call) => Some(call),
+            Err(_) => None,
+        };
+
         context.messages.push(Message {
             role: "assistant".to_string(),
             content: assistant_resp,
+            tool_calls: None,
         });
 
-        Ok(())
+        if let Some(call) = call {
+            if let Some(tool) = context.get_tool(&call.name) {
+                match tool.extract_args(call.parameters) {
+                    Ok(args) => {
+                        let resp = (tool.closure)(args);
+                        context.messages.push(Message {
+                            role: "tool".to_string(),
+                            content: resp,
+                            tool_calls: None,
+                        });
+                    }
+                    Err(e) => {
+                        context.messages.push(Message {
+                            role: "tool".to_string(),
+                            content: format!("Error calling {} : {}", call.name, e),
+                            tool_calls: None,
+                        });
+                    }
+                }
+
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     pub async fn init(host: &str, port: i32) -> Result<Ollama> {

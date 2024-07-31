@@ -2,7 +2,7 @@ use anyhow::Result;
 use copypasta_ext::prelude::*;
 use copypasta_ext::x11_bin::ClipboardContext;
 use log::{error, info};
-use ollama::Ollama;
+use ollama::{Ollama, Tool};
 use std::io::stdout;
 use std::io::{self, Write};
 use termimad::crossterm::style::Color::*;
@@ -117,6 +117,8 @@ struct Args {
 async fn interactive(ollama: &Ollama, args: &Args, skin: &MadSkin) -> Result<()> {
     let mut chat = ollama.context_new()?;
 
+    Tool::register_defaults(&mut chat);
+
     user_prompt();
 
     for line in std::io::stdin().lines() {
@@ -131,7 +133,12 @@ async fn interactive(ollama: &Ollama, args: &Args, skin: &MadSkin) -> Result<()>
 
         assistant_prompt();
 
-        ollama.chat(line.as_str(), &mut chat).await?;
+        let ret = ollama.chat(Some(line.as_str()), &mut chat).await?;
+
+        /* Need to call tools */
+        if ret {
+            while ollama.chat(None, &mut chat).await? {}
+        }
 
         if let Some(resp) = chat.response() {
             if domd || args.force_md {
@@ -156,8 +163,17 @@ async fn single(
     skin: &MadSkin,
 ) -> Result<Option<String>> {
     let mut chat = ollama.context_new()?;
+
+    Tool::register_defaults(&mut chat);
+
     let prompt = prompt_unfold_vars(prompt)?;
-    ollama.chat(prompt.as_str(), &mut chat).await?;
+
+    let ret = ollama.chat(Some(prompt.as_str()), &mut chat).await?;
+
+    /* Need to call tools */
+    if ret {
+        while ollama.chat(None, &mut chat).await? {}
+    }
 
     if let Some(response) = chat.response() {
         if args.force_md {
