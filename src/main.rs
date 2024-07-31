@@ -105,6 +105,10 @@ struct Args {
     #[clap(long, short, action)]
     list_models: bool,
 
+    /// Enable tools in queries (URL, calculator)
+    #[clap(long, short, action)]
+    enable_tools: bool,
+
     /// Store response to clipboard
     #[clap(long, short, action)]
     store_in_clipboard: bool,
@@ -117,7 +121,9 @@ struct Args {
 async fn interactive(ollama: &Ollama, args: &Args, skin: &MadSkin) -> Result<()> {
     let mut chat = ollama.context_new()?;
 
-    Tool::register_defaults(&mut chat);
+    if args.enable_tools {
+        Tool::register_defaults(&mut chat);
+    }
 
     user_prompt();
 
@@ -164,7 +170,9 @@ async fn single(
 ) -> Result<Option<String>> {
     let mut chat = ollama.context_new()?;
 
-    Tool::register_defaults(&mut chat);
+    if args.enable_tools {
+        Tool::register_defaults(&mut chat);
+    }
 
     let prompt = prompt_unfold_vars(prompt)?;
 
